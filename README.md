@@ -59,9 +59,9 @@ material to a provider. Without keys, it does the analysis on paper and says tha
 | `references/baseline-knobs.md` | The settings that make or break a plain baseline, with measured effects |
 | `references/tools.md` | How to use the scripts and read their numbers |
 | `references/report-template.md` | The report format |
-| `scripts/probe.py` | Runs variants × test cases with streaming; records time to first words, total time, tokens and estimated cost; supports scripted turns and simulated users; enforces a budget cap |
+| `scripts/probe.py` | Runs variants × test cases with streaming; records time to first words, total time, tokens and estimated cost; supports scripted turns, simulated users, repeats and tools (function calling); enforces a budget cap |
 | `scripts/judge.py` | Grades each transcript against the source material: serious and minor errors, declines (and whether they were answerable), ignored questions |
-| `examples/` | A fictional pricing sheet, a baseline prompt and an experiment file to start from |
+| `examples/` | A fictional pricing sheet, a baseline prompt, a small tool and an experiment file to start from |
 | `agents/openai.yaml` | Display metadata for Codex |
 
 Try the example (it costs well under US$1):

@@ -121,7 +121,10 @@ delivered, **diagnose before retrying**. Name the cause:
 - Model tier: too small for the reasoning needed, or bigger than needed and too slow
 - Settings: reasoning on or off, streaming, temperature or effort
 - Prompt: a missing goal, missing boundary or missing format instruction
-- Architecture: one call is not enough, and a simple tool, retrieval step or second pass is needed
+- Architecture: one call is not enough, and a simple tool, retrieval step or second pass is needed.
+  Typical case: filtering a table on several conditions across a conversation, or arithmetic. Fast
+  models often fail at this from text alone and stop failing with one small tool (`probe.py` supports
+  tools; see `references/tools.md`). Adding one small tool still counts as a plain baseline.
 
 Change one or two things per round and record what changed. Stop after round 3, or earlier when the
 thresholds are met or the remaining gap is clearly structural.

@@ -78,7 +78,7 @@ def main():
             continue
         convo = "\n".join(f"{'User' if r == 'user' else 'Assistant'}: {t}" for r, t in run["history"])
         judge_variant = dict(judge, input="text")
-        text, _, _, usage = probe.PROVIDERS[judge["provider"]](judge_variant, rubric, truth, [("user", convo)])
+        text, _, _, usage, _ = probe.PROVIDERS[judge["provider"]](judge_variant, rubric, truth, [("user", convo)])
         spend.add(probe.cost_usd(usage, judge.get("price")))
         m = re.search(r"\{.*\}", text, re.S)
         verdict = json.loads(m.group(0)) if m else {"wrong": [], "declined": [], "ignored": [], "summary": "PARSE ERROR: " + text[:200]}

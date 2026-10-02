@@ -17,6 +17,7 @@ the experiment file.
 | `materials` | Prepared text/Markdown files given to the model in full: PDF text, per-slide text and notes, tables from spreadsheets, descriptions of charts (see `baseline-knobs.md` §1). |
 | `budget_usd` | Hard cap for probe.py's estimated spend (the product + simulated user). |
 | `repeat` | Runs per (case, variant). Default 1. `--repeat N` on the command line overrides it. |
+| `tools_file` | Optional Python file defining `TOOLS = [{"name", "description", "parameters" (JSON Schema), "fn"}]`, offered to variants with `"tools": true`. See `examples/tools.example.py`. |
 | `variants[]` | One entry per setup to compare (see below). |
 | `cases[]` | Test cases: `id`, scripted `turns` (user messages sent in order), and optional `simulate: {persona, max_turns}` for a simulated user who continues after the script. |
 | `simulator` | Model that plays the user (provider, model, price). Needed only if a case uses `simulate`. |
@@ -31,11 +32,13 @@ the experiment file.
 | `id` | Short name used in file names and tables. |
 | `provider` | `anthropic` or `openai`. |
 | `model` | Model ID. Check current IDs and prices from the provider's docs; do not trust memory. |
-| `input` | `text` (prepared materials in the system prompt, cached) or `pdf` (send the raw `pdf` as a document on the first turn, to compare raw vs prepared). |
+| `input` | `text` (prepared materials in the system prompt, cached), `pdf` (send the raw `pdf` as a document on the first turn, to compare raw vs prepared), or `none` (no material in context, e.g. when a tool holds the data). |
 | `pdf` | Path to the PDF when `input` is `pdf`. |
 | `reasoning_effort` | OpenAI reasoning models: `none` to turn reasoning off; others to compare. |
 | `thinking`, `output_config` | Passed through to Anthropic as-is (thinking off/on, effort). Use the shapes in the current model docs. |
 | `max_tokens` | Default 4000. |
+| `tools` | `true` to offer the experiment's tools. The model may call them several times per turn. |
+| `max_tool_rounds` | Tool calls allowed per turn before the answer is cut off. Default 4. |
 | `price` | USD per 1M tokens: `input`, `output`, `cached_input` (default 10% of input), `cache_write` (default = input). Used only for the cost estimate. |
 
 ## Running
@@ -52,6 +55,18 @@ Results go to `<out>/<case>__<variant>.json`, with repeats as `<case>__<variant>
 and so on. Judgments go to `<out>/judgments.json`. Both scripts skip work that is already done, so you
 can add a variant, or raise `--repeat` for the deciding cases, and re-run. Tables count runs, so
 "0 serious errors in 15 runs" can be read straight off them.
+
+## Tools
+
+Use tools in the architecture round when the plain baseline fails at something that is really
+computation or lookup: filtering a table across several conditions, arithmetic, date logic, or checking
+live availability. Give the model the smallest tool that does the job (a 30-line filter function is
+typical), and keep a no-tool variant in the same run for comparison.
+
+With tools, one turn may involve several model calls. "First words" and "finished" cover the whole
+turn, and usage and cost are summed over its calls. Each result file has `tool_traces` (which tool,
+which arguments, what came back), so you can tell whether an error came from the model or from the
+tool's input.
 
 ## Reading the numbers
 

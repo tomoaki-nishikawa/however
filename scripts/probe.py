@@ -60,7 +60,46 @@ def cost_usd(usage, price):
             + usage["cache_read"] * p_cached + usage["cache_write"] * p_write) / 1e6
 
 
+# ---------------------------------------------------------------- tools
+
+TOOLS = {}  # name -> {"description", "parameters", "fn"}; loaded from the experiment's tools_file
+
+
+def load_tools(cfg):
+    """tools_file: a Python file defining TOOLS = [{"name", "description", "parameters" (JSON Schema), "fn"}]."""
+    path = cfg.get("tools_file")
+    if not path:
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("experiment_tools", os.path.join(BASE, path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for t in module.TOOLS:
+        TOOLS[t["name"]] = t
+
+
+def run_tool(name, args):
+    try:
+        return TOOLS[name]["fn"](**args)
+    except Exception as e:  # report the failure to the model, as a real tool would
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def uses_tools(variant):
+    if variant.get("tools") and not TOOLS:
+        raise SystemExit(f"Variant {variant['id']} sets tools: true but the experiment has no tools_file.")
+    return bool(variant.get("tools"))
+
+
+def add_usage(total, part):
+    for k in total:
+        total[k] += part[k]
+
+
 # ---------------------------------------------------------------- providers
+# Each turn function returns (text, seconds_to_first_words, seconds_total, usage, tool_trace).
+# With tools, one turn may take several model calls; the timings cover the whole turn and the
+# usage is summed over its calls.
 
 def anthropic_turn(variant, system_prompt, material, history):
     import anthropic
@@ -85,20 +124,36 @@ def anthropic_turn(variant, system_prompt, material, history):
     for key in ("thinking", "output_config"):
         if key in variant:
             extra[key] = variant[key]
+    if uses_tools(variant):
+        extra["tools"] = [{"name": n, "description": t["description"], "input_schema": t["parameters"]}
+                          for n, t in TOOLS.items()]
     t0 = time.time()
     first = None
-    with client.messages.stream(model=variant["model"], max_tokens=variant.get("max_tokens", 4000),
-                                system=system, messages=msgs, **extra) as stream:
-        for _ in stream.text_stream:
-            if first is None:
-                first = time.time() - t0
-        final = stream.get_final_message()
+    texts, trace = [], []
+    usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    for _ in range(variant.get("max_tool_rounds", 4) + 1):
+        with client.messages.stream(model=variant["model"], max_tokens=variant.get("max_tokens", 4000),
+                                    system=system, messages=msgs, **extra) as stream:
+            for _ in stream.text_stream:
+                if first is None:
+                    first = time.time() - t0
+            final = stream.get_final_message()
+        u = final.usage
+        add_usage(usage, {"input": u.input_tokens, "output": u.output_tokens,
+                          "cache_read": u.cache_read_input_tokens or 0, "cache_write": u.cache_creation_input_tokens or 0})
+        texts.append("".join(b.text for b in final.content if b.type == "text").strip())
+        tool_uses = [b for b in final.content if b.type == "tool_use"]
+        if final.stop_reason != "tool_use" or not tool_uses:
+            break
+        msgs.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in final.content]})
+        results = []
+        for b in tool_uses:
+            out = run_tool(b.name, b.input)
+            trace.append({"tool": b.name, "args": b.input, "result": out})
+            results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(out, ensure_ascii=False)})
+        msgs.append({"role": "user", "content": results})
     total = time.time() - t0
-    text = "".join(b.text for b in final.content if b.type == "text").strip()
-    u = final.usage
-    usage = {"input": u.input_tokens, "output": u.output_tokens,
-             "cache_read": u.cache_read_input_tokens or 0, "cache_write": u.cache_creation_input_tokens or 0}
-    return text, first if first is not None else total, total, usage
+    return "\n".join(t for t in texts if t), first if first is not None else total, total, usage, trace
 
 
 _openai_files = {}
@@ -122,26 +177,56 @@ def openai_turn(variant, system_prompt, material, history):
     kwargs = {}
     if "reasoning_effort" in variant:
         kwargs["reasoning_effort"] = variant["reasoning_effort"]
+    if uses_tools(variant):
+        kwargs["tools"] = [{"type": "function", "function": {"name": n, "description": t["description"],
+                                                             "parameters": t["parameters"]}}
+                           for n, t in TOOLS.items()]
     t0 = time.time()
     first = None
-    parts = []
-    usage = None
-    stream = client.chat.completions.create(model=variant["model"], messages=msgs, stream=True,
-                                            stream_options={"include_usage": True}, **kwargs)
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            if first is None:
-                first = time.time() - t0
-            parts.append(chunk.choices[0].delta.content)
-        if chunk.usage:
-            usage = chunk.usage
+    texts, trace = [], []
+    usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    for _ in range(variant.get("max_tool_rounds", 4) + 1):
+        parts, calls, u = [], {}, None
+        stream = client.chat.completions.create(model=variant["model"], messages=msgs, stream=True,
+                                                stream_options={"include_usage": True}, **kwargs)
+        for chunk in stream:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    if first is None:
+                        first = time.time() - t0
+                    parts.append(delta.content)
+                for tc in delta.tool_calls or []:
+                    acc = calls.setdefault(tc.index, {"id": None, "name": "", "arguments": ""})
+                    if tc.id:
+                        acc["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        acc["name"] += tc.function.name
+                    if tc.function and tc.function.arguments:
+                        acc["arguments"] += tc.function.arguments
+            if chunk.usage:
+                u = chunk.usage
+        if u:
+            cached = (u.prompt_tokens_details.cached_tokens or 0) if u.prompt_tokens_details else 0
+            add_usage(usage, {"input": u.prompt_tokens - cached, "output": u.completion_tokens,
+                              "cache_read": cached, "cache_write": 0})
+        texts.append("".join(parts).strip())
+        if not calls:
+            break
+        ordered = [calls[i] for i in sorted(calls)]
+        msgs.append({"role": "assistant", "content": "".join(parts) or None,
+                     "tool_calls": [{"id": c["id"], "type": "function",
+                                     "function": {"name": c["name"], "arguments": c["arguments"]}} for c in ordered]})
+        for c in ordered:
+            try:
+                args = json.loads(c["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            out = run_tool(c["name"], args)
+            trace.append({"tool": c["name"], "args": args, "result": out})
+            msgs.append({"role": "tool", "tool_call_id": c["id"], "content": json.dumps(out, ensure_ascii=False)})
     total = time.time() - t0
-    cached = 0
-    if usage and usage.prompt_tokens_details:
-        cached = usage.prompt_tokens_details.cached_tokens or 0
-    u = {"input": (usage.prompt_tokens - cached) if usage else 0, "output": usage.completion_tokens if usage else 0,
-         "cache_read": cached, "cache_write": 0}
-    return "".join(parts).strip(), first if first is not None else total, total, u
+    return "\n".join(t for t in texts if t), first if first is not None else total, total, usage, trace
 
 
 PROVIDERS = {"anthropic": anthropic_turn, "openai": openai_turn}
@@ -168,7 +253,7 @@ def simulate(cfg, persona, history):
     convo = "\n".join(f"{'User' if r == 'user' else 'Assistant'}: {t}" for r, t in history)
     prompt = f"Conversation so far:\n{convo}\n\nWrite your next message."
     sim_variant = dict(sim, input="none")
-    text, _, _, usage = PROVIDERS[sim["provider"]](sim_variant, SIM_PROMPT.format(persona=persona), "", [("user", prompt)])
+    text, _, _, usage, _ = PROVIDERS[sim["provider"]](sim_variant, SIM_PROMPT.format(persona=persona), "", [("user", prompt)])
     return text, usage
 
 
@@ -208,6 +293,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     system_prompt = load_text(cfg["system_prompt_file"])
     material = material_text(cfg)
+    load_tools(cfg)
     spend = Spend(cfg.get("budget_usd"))
 
     repeat = args.repeat or cfg.get("repeat", 1)
@@ -221,7 +307,7 @@ def main():
             if os.path.exists(path):
                 continue
             print(f"run {case['id']} x {variant['id']} (#{run_no})", flush=True)
-            history, timing, calls = [], [], []
+            history, timing, calls, tool_traces = [], [], [], []
             scripted = list(case.get("turns", []))
             sim = case.get("simulate")
             max_turns = len(scripted) + (sim.get("max_turns", 3) if sim else 0)
@@ -236,7 +322,9 @@ def main():
                     if "<END>" in msg:
                         break
                 history.append(("user", msg))
-                text, ttft, total, u = turn_fn(variant, system_prompt, material, history)
+                text, ttft, total, u, trace = turn_fn(variant, system_prompt, material, history)
+                if trace:
+                    tool_traces.append({"turn": len(timing) + 1, "calls": trace})
                 c = cost_usd(u, variant.get("price"))
                 calls.append({"role": "product", **u, "usd": c})
                 spend.add(c)
@@ -244,7 +332,7 @@ def main():
                 history.append(("assistant", text))
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"case": case["id"], "variant": variant["id"], "run": run_no, "history": history,
-                           "timing": timing, "calls": calls}, f, ensure_ascii=False, indent=1)
+                           "timing": timing, "calls": calls, "tool_traces": tool_traces}, f, ensure_ascii=False, indent=1)
 
     # summary
     print(f"\nEstimated spend this run: ${spend.total:.4f}\n")
