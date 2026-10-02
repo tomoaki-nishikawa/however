@@ -1,0 +1,16 @@
+Acme Bookkeeping — Plans and Pricing (fictional sample material)
+
+Plans
+- Starter: up to 50 invoices per month. US$19 per month, billed annually. One user.
+- Team: up to 500 invoices per month. US$79 per month, billed annually. Up to 5 users. Extra users US$9 per user per month.
+- Enterprise: unlimited invoices. Quote only. Single sign-on and audit logs are Enterprise-only.
+
+Onboarding
+- Starter and Team: self-serve, usually live within 1 day.
+- Enterprise: guided onboarding, typically 2–4 weeks.
+- Migration from another bookkeeping tool: one-time fee of US$300 (Team) or included (Enterprise). Not available on Starter.
+
+Notes
+- Prices exclude sales tax.
+- Acme does not provide tax advice. Questions about how a specific transaction should be taxed must go to a licensed accountant.
+- Annual plans can be cancelled with a prorated refund within the first 30 days only.

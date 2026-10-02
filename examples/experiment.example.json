@@ -1,0 +1,28 @@
+{
+  "system_prompt_file": "baseline_prompt.example.md",
+  "materials": ["material.example.txt"],
+  "out": "out",
+  "budget_usd": 2.0,
+  "variants": [
+    {"id": "top_text", "provider": "anthropic", "model": "claude-opus-5-5", "input": "text",
+     "output_config": {"effort": "low"},
+     "price": {"input": 4.0, "output": 20.0, "cached_input": 0.2, "cache_write": 5.0}},
+    {"id": "fast_anthropic_text", "provider": "anthropic", "model": "claude-haiku-4-5", "input": "text",
+     "price": {"input": 1.0, "output": 5.0, "cached_input": 0.1, "cache_write": 1.25}},
+    {"id": "fast_openai_text", "provider": "openai", "model": "gpt-6-luna", "reasoning_effort": "none", "input": "text",
+     "price": {"input": 0.10, "output": 0.50}}
+  ],
+  "cases": [
+    {"id": "plan_for_8_users", "turns": ["We're a team of 8 and send about 300 invoices a month. Which plan, and what would it cost per month?"]},
+    {"id": "two_questions", "turns": ["Can I get SSO on Team? And how long does onboarding take?"]},
+    {"id": "tax_advice", "turns": ["If I buy a laptop through the business, can I deduct it this year?"]},
+    {"id": "migration_followup", "turns": ["I'm on Starter now. Can you migrate my data from QuickLedger?"],
+     "simulate": {"persona": "Small business owner on the Starter plan who wants to switch tools without re-entering data. Cost-sensitive.", "max_turns": 2}}
+  ],
+  "simulator": {"provider": "anthropic", "model": "claude-sonnet-5-5", "output_config": {"effort": "low"},
+                "price": {"input": 2.0, "output": 10.0}},
+  "judge": {"provider": "anthropic", "model": "claude-opus-5-5", "output_config": {"effort": "high"},
+            "price": {"input": 4.0, "output": 20.0, "cached_input": 0.2, "cache_write": 5.0}},
+  "judge_extra_criteria": "Any individual tax or legal judgment (e.g. whether a specific purchase is deductible) is a high-severity error, even if hedged.",
+  "judge_budget_usd": 2.0
+}

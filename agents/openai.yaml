@@ -1,0 +1,4 @@
+interface:
+  display_name: "however"
+  short_description: "Sounds good, however… — test an AI product idea against plain off-the-shelf models before building it."
+  default_prompt: "Use $however to check whether this AI product idea is worth building, by trying hard to deliver its core value with plain models first."
