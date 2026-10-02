@@ -67,14 +67,14 @@ def main():
     if os.path.exists(path_out):
         with open(path_out, encoding="utf-8") as f:
             results = json.load(f)
-    done = {(r["case"], r["variant"]) for r in results}
+    done = {(r["case"], r["variant"], r.get("run", 1)) for r in results}
 
     for name in sorted(os.listdir(out)):
         if "__" not in name or not name.endswith(".json"):
             continue
         with open(os.path.join(out, name), encoding="utf-8") as f:
             run = json.load(f)
-        if (run["case"], run["variant"]) in done:
+        if (run["case"], run["variant"], run.get("run", 1)) in done:
             continue
         convo = "\n".join(f"{'User' if r == 'user' else 'Assistant'}: {t}" for r, t in run["history"])
         judge_variant = dict(judge, input="text")
@@ -82,25 +82,25 @@ def main():
         spend.add(probe.cost_usd(usage, judge.get("price")))
         m = re.search(r"\{.*\}", text, re.S)
         verdict = json.loads(m.group(0)) if m else {"wrong": [], "declined": [], "ignored": [], "summary": "PARSE ERROR: " + text[:200]}
-        results.append({"case": run["case"], "variant": run["variant"], "verdict": verdict})
+        results.append({"case": run["case"], "variant": run["variant"], "run": run.get("run", 1), "verdict": verdict})
         with open(path_out, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=1)
-        print(f"graded {run['case']} x {run['variant']}", flush=True)
+        print(f"graded {run['case']} x {run['variant']} (#{run.get('run', 1)})", flush=True)
 
     agg = collections.defaultdict(collections.Counter)
     for r in results:
         v, a = r["verdict"], agg[r["variant"]]
-        a["cases"] += 1
+        a["runs"] += 1
         a["serious"] += sum(1 for w in v.get("wrong", []) if w.get("severity") == "high")
         a["minor"] += sum(1 for w in v.get("wrong", []) if w.get("severity") != "high")
         a["declined"] += len(v.get("declined", []))
         a["declined_answerable"] += sum(1 for d in v.get("declined", []) if d.get("answerable_from_source"))
         a["ignored"] += len(v.get("ignored", []))
     print(f"\nEstimated judge spend this run: ${spend.total:.4f}\n")
-    print("| variant | cases | serious errors | minor errors | declined (answerable) | ignored |")
+    print("| variant | runs | serious errors | minor errors | declined (answerable) | ignored |")
     print("|---|---|---|---|---|---|")
     for variant, a in sorted(agg.items()):
-        print(f"| {variant} | {a['cases']} | {a['serious']} | {a['minor']} | {a['declined']} ({a['declined_answerable']}) | {a['ignored']} |")
+        print(f"| {variant} | {a['runs']} | {a['serious']} | {a['minor']} | {a['declined']} ({a['declined_answerable']}) | {a['ignored']} |")
 
 
 if __name__ == "__main__":

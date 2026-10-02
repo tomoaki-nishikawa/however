@@ -2,11 +2,11 @@
 """Run plain-baseline variants over test cases and record latency, usage and cost.
 
 Usage:
-    python probe.py <experiment.json> [--out <dir>] [--only <variant_id> ...] [--cases <case_id> ...]
+    python probe.py <experiment.json> [--out <dir>] [--only <variant_id> ...] [--cases <case_id> ...] [--repeat N]
 
 The experiment file is described in references/tools.md, and examples/experiment.example.json is a
-starting point. For each (case, variant) the script writes <out>/<case>__<variant>.json with the
-transcript, per-turn time-to-first-token and total time, token usage and estimated cost. It finishes with
+starting point. For each (case, variant) the script writes <out>/<case>__<variant>.json (repeats:
+<case>__<variant>__r2.json, __r3.json, ...) with the transcript, per-turn time-to-first-token and total time, token usage and estimated cost. It finishes with
 a per-variant summary table. Existing result files are skipped, so a re-run resumes where it stopped.
 
 Requires: `pip install anthropic openai` for whichever providers you use, and the matching API keys
@@ -172,6 +172,22 @@ def simulate(cfg, persona, history):
     return text, usage
 
 
+# ---------------------------------------------------------------- result files
+
+def result_name(case_id, variant_id, run_no):
+    """The first run keeps the plain name, so raising --repeat later reuses it."""
+    suffix = "" if run_no == 1 else f"__r{run_no}"
+    return f"{case_id}__{variant_id}{suffix}.json"
+
+
+def result_files(out, case_id, variant_id):
+    first = os.path.join(out, result_name(case_id, variant_id, 1))
+    files = [first] if os.path.exists(first) else []
+    prefix = f"{case_id}__{variant_id}__r"
+    files += sorted(os.path.join(out, n) for n in os.listdir(out) if n.startswith(prefix) and n.endswith(".json"))
+    return files
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -181,6 +197,8 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--only", nargs="*", default=None, help="variant ids to run")
     ap.add_argument("--cases", nargs="*", default=None, help="case ids to run")
+    ap.add_argument("--repeat", type=int, default=None,
+                    help="runs per (case, variant); overrides the experiment's `repeat` (default 1)")
     args = ap.parse_args()
 
     BASE = os.path.dirname(os.path.abspath(args.experiment))
@@ -192,16 +210,17 @@ def main():
     material = material_text(cfg)
     spend = Spend(cfg.get("budget_usd"))
 
+    repeat = args.repeat or cfg.get("repeat", 1)
     variants = [v for v in cfg["variants"] if not args.only or v["id"] in args.only]
     cases = [c for c in cfg["cases"] if not args.cases or c["id"] in args.cases]
 
     for variant in variants:
         turn_fn = PROVIDERS[variant["provider"]]
-        for case in cases:
-            path = os.path.join(out, f"{case['id']}__{variant['id']}.json")
+        for case, run_no in [(c, k) for c in cases for k in range(1, repeat + 1)]:
+            path = os.path.join(out, result_name(case["id"], variant["id"], run_no))
             if os.path.exists(path):
                 continue
-            print(f"run {case['id']} x {variant['id']}", flush=True)
+            print(f"run {case['id']} x {variant['id']} (#{run_no})", flush=True)
             history, timing, calls = [], [], []
             scripted = list(case.get("turns", []))
             sim = case.get("simulate")
@@ -224,16 +243,15 @@ def main():
                 timing.append({"ttft": round(ttft, 2), "total": round(total, 2)})
                 history.append(("assistant", text))
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"case": case["id"], "variant": variant["id"], "history": history,
+                json.dump({"case": case["id"], "variant": variant["id"], "run": run_no, "history": history,
                            "timing": timing, "calls": calls}, f, ensure_ascii=False, indent=1)
 
     # summary
     print(f"\nEstimated spend this run: ${spend.total:.4f}\n")
-    print("| variant | turns | first words (median / max) | finished (median / max) | cost per case |")
-    print("|---|---|---|---|---|")
+    print("| variant | runs | turns | first words (median / max) | finished (median / max) | cost per run |")
+    print("|---|---|---|---|---|---|")
     for variant in cfg["variants"]:
-        files = [os.path.join(out, f"{c['id']}__{variant['id']}.json") for c in cfg["cases"]]
-        files = [p for p in files if os.path.exists(p)]
+        files = [p for c in cfg["cases"] for p in result_files(out, c["id"], variant["id"])]
         if not files:
             continue
         ttft, total, usd = [], [], 0.0
@@ -243,7 +261,7 @@ def main():
             ttft += [t["ttft"] for t in d["timing"]]
             total += [t["total"] for t in d["timing"]]
             usd += sum(c["usd"] for c in d["calls"] if c["role"] == "product")
-        print(f"| {variant['id']} | {len(ttft)} | {statistics.median(ttft):.1f}s / {max(ttft):.1f}s | "
+        print(f"| {variant['id']} | {len(files)} | {len(ttft)} | {statistics.median(ttft):.1f}s / {max(ttft):.1f}s | "
               f"{statistics.median(total):.1f}s / {max(total):.1f}s | ${usd / len(files):.4f} |")
 
 

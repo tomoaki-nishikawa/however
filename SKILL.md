@@ -85,7 +85,9 @@ List what must hold for the core value to land in real use, and turn each into a
 
 Then write 5–10 test cases. Include ordinary ones, the user's own worst fears, and adversarial ones:
 two questions at once, a premise that changes mid-conversation, asking about something that does not
-exist, a question it must refuse.
+exist, a question it must refuse. If the product is conversational, include **at least one multi-turn
+case**, with scripted follow-ups or a simulated user. Single questions miss the failures that build up
+over a conversation: forgetting earlier answers, repeating boilerplate, drifting off the material.
 
 ### Phase 4 — Build plain baselines, measure, retry (at most 3 rounds)
 
@@ -123,6 +125,10 @@ delivered, **diagnose before retrying**. Name the cause:
 
 Change one or two things per round and record what changed. Stop after round 3, or earlier when the
 thresholds are met or the remaining gap is clearly structural.
+
+**Before writing the verdict, re-run the cases that decide it** (the must-refuse case, the
+calculation, the user's worst fear) 3–5 times on the variants you will cite, with `--repeat`. Report
+the result as counts over runs.
 
 Show the user short excerpts of real transcripts, good and bad. Numbers alone do not convince anyone.
 

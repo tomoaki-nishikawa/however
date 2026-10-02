@@ -16,6 +16,7 @@ the experiment file.
 | `system_prompt_file` | The baseline prompt. Keep it short and goal-oriented (`examples/baseline_prompt.example.md`). |
 | `materials` | Prepared text/Markdown files given to the model in full: PDF text, per-slide text and notes, tables from spreadsheets, descriptions of charts (see `baseline-knobs.md` §1). |
 | `budget_usd` | Hard cap for probe.py's estimated spend (the product + simulated user). |
+| `repeat` | Runs per (case, variant). Default 1. `--repeat N` on the command line overrides it. |
 | `variants[]` | One entry per setup to compare (see below). |
 | `cases[]` | Test cases: `id`, scripted `turns` (user messages sent in order), and optional `simulate: {persona, max_turns}` for a simulated user who continues after the script. |
 | `simulator` | Model that plays the user (provider, model, price). Needed only if a case uses `simulate`. |
@@ -42,12 +43,15 @@ the experiment file.
 ```bash
 python scripts/probe.py path/to/experiment.json            # all variants x all cases
 python scripts/probe.py path/to/experiment.json --only fast_text --cases pricing_total
+python scripts/probe.py path/to/experiment.json --only fast_text --cases refuse_legal pricing_total --repeat 5
 python scripts/judge.py path/to/experiment.json            # grade everything not yet graded
 python scripts/judge.py path/to/experiment.json --truth policy.txt brochure.txt   # different source of truth
 ```
 
-Results go to `<out>/<case>__<variant>.json`, and judgments to `<out>/judgments.json`. Both scripts skip
-work that is already done, so you can add a variant and re-run.
+Results go to `<out>/<case>__<variant>.json`, with repeats as `<case>__<variant>__r2.json`, `__r3.json`,
+and so on. Judgments go to `<out>/judgments.json`. Both scripts skip work that is already done, so you
+can add a variant, or raise `--repeat` for the deciding cases, and re-run. Tables count runs, so
+"0 serious errors in 15 runs" can be read straight off them.
 
 ## Reading the numbers
 
@@ -57,6 +61,6 @@ work that is already done, so you can add a variant and re-run.
 - Serious errors are the ones that decide verdicts. Declines are often acceptable; ask the user.
   "Declined but answerable" shows the baseline is too cautious, and is usually fixable with the prompt.
 - Ignored questions (deflecting, repeating boilerplate) are what users notice first.
-- Re-run the cases that decide the verdict 3–5 times. A single pass is not a rate.
+- Re-run the cases that decide the verdict 3–5 times with `--repeat`. A single pass is not a rate.
 - A judge model grading another model has blind spots. Spot-check the verdict-deciding transcripts
   yourself, and quote them in the report.
